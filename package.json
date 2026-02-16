@@ -1,0 +1,16 @@
+{
+  "name": "chistapi-xd",
+  "version": "1.0.0",
+  "description": "API de chistes aleatorios para Vercel",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node api/index.js",
+    "dev": "node api/index.js"
+  },
+  "keywords": ["chistes", "api", "vercel"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
