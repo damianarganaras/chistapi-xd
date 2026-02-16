@@ -5,8 +5,8 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY;
 
 const WEATHER_URL_POSADAS =
-  "https://wttr.in/Posadas,Misiones?format=%t+%C";
-const WEATHER_URL_CABA = "https://wttr.in/BuenosAires?format=%t+%C";
+  "https://wttr.in/Posadas,Misiones?format=%t+%C&m";
+const WEATHER_URL_CABA = "https://wttr.in/BuenosAires?format=%t+%C&m";
 const GIPHY_TAGS = ["bendiciones", "flores", "buenos dias"];
 
 if (!DISCORD_WEBHOOK_URL) {
@@ -52,7 +52,8 @@ async function getRandomGifUrl() {
     }
 
     const payload = await response.json();
-    return payload?.data?.images?.original?.url || payload?.data?.image_url || null;
+    const gifUrl = payload?.data?.images?.original?.url;
+    return typeof gifUrl === "string" && gifUrl.length > 0 ? gifUrl : null;
   } catch (error) {
     return null;
   }
@@ -102,7 +103,9 @@ async function run() {
         ? "Buenas tardes"
         : "Buenas noches";
 
-  const embedColor = currentHour >= 6 && currentHour < 20 ? 0x2d3436 : 0x2d3436;
+  const COLOR_CELESTE = 3394815; // #33ccff
+  const COLOR_PURPURA = 10040319; // #9933ff
+  const embedColor = currentHour < 12 ? COLOR_CELESTE : COLOR_PURPURA;
 
   const customGreetings = [
     "Buendicioooones!!",
