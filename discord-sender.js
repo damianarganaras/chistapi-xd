@@ -1,29 +1,72 @@
 const fs = require("fs");
 const path = require("path");
 
-// URL del Webhook desde variable de entorno (GitHub Secrets)
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
 
 if (!DISCORD_WEBHOOK_URL) {
-  console.error("Error: No se encontró la variable DISCORD_WEBHOOK");
+  console.error("Error: DISCORD_WEBHOOK no configurado.");
   process.exit(1);
 }
 
-// 1. Leer y parsear el CSV
-const csvPath = path.join(__dirname, "jokes.csv");
-const data = fs.readFileSync(csvPath, "utf8");
-const lines = data.split("\n").filter((line) => line.trim() !== "");
-const jokes = lines.slice(1).map((line) => {
-  const parts = line.split("|");
-  return { setup: parts[1], punchline: parts[2] };
-});
+async function getWeather(city) {
+  try {
+    const url = `https://wttr.in/${encodeURIComponent(city)}?format=%t+%C`;
+    const response = await fetch(url);
 
-// 2. Elegir chiste al azar
-const randomJoke = jokes[Math.floor(Math.random() * jokes.length)];
+    if (!response.ok) {
+      return "N/A";
+    }
 
-// 3. Lógica de saludos e insultos (Tu lógica de Zapier mejorada)
-const currentHour = new Date().getHours(); // Ojo: La hora en GitHub Actions suele ser UTC
-let timeGreeting = "Buenas"; // Genérico porque UTC varía
+    return (await response.text()).trim();
+  } catch (error) {
+    return "Error al obtener clima";
+  }
+}
+
+function getRandomJoke() {
+  const csvPath = path.join(__dirname, "jokes.csv");
+  const data = fs.readFileSync(csvPath, "utf8");
+
+  const lines = data
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const jokes = lines
+    .slice(1)
+    .map((line) => {
+      const parts = line.split("|");
+      return {
+        setup: (parts[1] || "").trim(),
+        punchline: (parts[2] || "").trim(),
+      };
+    })
+    .filter((joke) => joke.setup && joke.punchline);
+
+  if (jokes.length === 0) {
+    throw new Error("No se encontraron chistes válidos en jokes.csv");
+  }
+
+  return jokes[Math.floor(Math.random() * jokes.length)];
+}
+
+async function run() {
+  const randomJoke = getRandomJoke();
+
+  const [weatherPosadas, weatherCABA] = await Promise.all([
+    getWeather("Posadas,Misiones"),
+    getWeather("BuenosAires"),
+  ]);
+
+  const currentHour = (new Date().getUTCHours() - 3 + 24) % 24;
+  const timeGreeting =
+    currentHour < 12
+      ? "Buenos días"
+      : currentHour < 20
+      ? "Buenas tardes"
+      : "Buenas noches";
+
+  const embedColor = currentHour >= 6 && currentHour < 20 ? 0x00b894 : 0x2d3436;
 
 const customGreetings = [
   "Buendicioooones!!",
@@ -92,26 +135,46 @@ const customGreetings = [
   "German, te extrañamos (dijo nadie nunca).",
 ];
 
-const randomPhrase =
-  customGreetings[Math.floor(Math.random() * customGreetings.length)];
+  const randomPhrase =
+    customGreetings[Math.floor(Math.random() * customGreetings.length)];
 
-// 4. Formatear mensaje para Discord
-// Discord usa **negrita** igual que Markdown estándar
-const messageContent = `${timeGreeting}, ${randomPhrase}\n\n**${randomJoke.setup}**\n${randomJoke.punchline}`;
+  const embedMessage = {
+    embeds: [
+      {
+        title: `${timeGreeting}, ${randomPhrase}`,
+        description: `### ${randomJoke.setup}\n*${randomJoke.punchline}*`,
+        color: embedColor,
+        fields: [
+          {
+            name: "📍 Posadas",
+            value: `\`${weatherPosadas}\``,
+            inline: true,
+          },
+          {
+            name: "📍 Buenos Aires",
+            value: `\`${weatherCABA}\``,
+            inline: true,
+          },
+        ],
+        footer: {
+          text: "Bot de Chistes Personalizado | 2026",
+        },
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
 
-// 5. Enviar a Discord (Fetch nativo en Node 18+)
-async function sendToDiscord() {
   try {
-    const response = await fetch(`https://discord.com/api/webhooks/1473028443972305043/h9xej66w_KYtRPOXmlbI_XbtBpFLYj2vpJzvwgPVgvKhdLBEht0j7VIHD2dRJVHjQ5e8`, {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: messageContent }),
+      body: JSON.stringify(embedMessage),
     });
 
     if (response.ok) {
-      console.log("Mensaje enviado a Discord con éxito.");
+      console.log("Mensaje enviado con éxito.");
     } else {
-      console.error("Error al enviar a Discord:", response.statusText);
+      console.error("Error Discord:", response.status, response.statusText);
       process.exit(1);
     }
   } catch (error) {
@@ -120,4 +183,4 @@ async function sendToDiscord() {
   }
 }
 
-sendToDiscord();
+run();
