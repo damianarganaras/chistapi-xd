@@ -2,6 +2,12 @@ const fs = require("fs");
 const path = require("path");
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
+const GIPHY_API_KEY = process.env.GIPHY_API_KEY;
+
+const WEATHER_URL_POSADAS =
+  "https://wttr.in/Posadas,Misiones?format=%t+%C";
+const WEATHER_URL_CABA = "https://wttr.in/BuenosAires?format=%t+%C";
+const GIPHY_TAGS = ["bendiciones", "flores", "buenos dias"];
 
 if (!DISCORD_WEBHOOK_URL) {
   console.error("Error: DISCORD_WEBHOOK no configurado.");
@@ -10,8 +16,7 @@ if (!DISCORD_WEBHOOK_URL) {
 
 async function getWeather(city) {
   try {
-    const url = `https://wttr.in/${encodeURIComponent(city)}?format=%t+%C`;
-    const response = await fetch(url);
+    const response = await fetch(city);
 
     if (!response.ok) {
       return "N/A";
@@ -20,6 +25,36 @@ async function getWeather(city) {
     return (await response.text()).trim();
   } catch (error) {
     return "Error al obtener clima";
+  }
+}
+
+async function getRandomGifUrl() {
+  if (!GIPHY_API_KEY) {
+    console.warn("Aviso: GIPHY_API_KEY no configurado. Se enviará sin GIF.");
+    return null;
+  }
+
+  const randomTag = GIPHY_TAGS[Math.floor(Math.random() * GIPHY_TAGS.length)];
+
+  try {
+    const params = new URLSearchParams({
+      api_key: GIPHY_API_KEY,
+      tag: randomTag,
+      rating: "g",
+    });
+
+    const response = await fetch(
+      `https://api.giphy.com/v1/gifs/random?${params.toString()}`,
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = await response.json();
+    return payload?.data?.images?.original?.url || payload?.data?.image_url || null;
+  } catch (error) {
+    return null;
   }
 }
 
@@ -53,15 +88,16 @@ function getRandomJoke() {
 async function run() {
   const randomJoke = getRandomJoke();
 
-  const [weatherPosadas, weatherCABA] = await Promise.all([
-    getWeather("Posadas,Misiones"),
-    getWeather("BuenosAires"),
+  const [weatherPosadas, weatherCABA, gifUrl] = await Promise.all([
+    getWeather(WEATHER_URL_POSADAS),
+    getWeather(WEATHER_URL_CABA),
+    getRandomGifUrl(),
   ]);
 
   const currentHour = (new Date().getUTCHours() - 3 + 24) % 24;
   const timeGreeting =
     currentHour < 12
-      ? "Buenos días"
+      ? "Buen día"
       : currentHour < 20
         ? "Buenas tardes"
         : "Buenas noches";
@@ -142,8 +178,9 @@ async function run() {
     embeds: [
       {
         title: `${timeGreeting}, ${randomPhrase}`,
-        description: `### ${randomJoke.setup}\n${randomJoke.punchline}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        description: `### ${randomJoke.setup}\n${randomJoke.punchline}\n\n━━━━━━━━━━━━━━━━━━━━`,
         color: embedColor,
+        ...(gifUrl ? { image: { url: gifUrl } } : {}),
         fields: [
           {
             name: "📍 Posadas",
