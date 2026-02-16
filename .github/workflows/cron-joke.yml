@@ -1,0 +1,26 @@
+name: Daily Discord Joke
+
+on:
+  schedule:
+    # Corre todos los días a las 14:00 UTC (11:00 AM Argentina aprox)
+    - cron: '0 14 * * *'
+  # Permite ejecutarlo manualmente desde la pestaña Actions para probar
+  workflow_dispatch:
+
+jobs:
+  send-joke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Ejecutar Script
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: node discord-sender.js
