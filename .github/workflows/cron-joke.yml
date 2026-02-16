@@ -23,4 +23,5 @@ jobs:
       - name: Ejecutar Script
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          GIPHY_API_KEY: ${{ secrets.GIPHY_API_KEY }}
         run: node discord-sender.js
