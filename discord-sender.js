@@ -102,7 +102,7 @@ const messageContent = `${timeGreeting}, ${randomPhrase}\n\n**${randomJoke.setup
 // 5. Enviar a Discord (Fetch nativo en Node 18+)
 async function sendToDiscord() {
   try {
-    const response = await fetch(DISCORD_WEBHOOK_URL, {
+    const response = await fetch(`https://discord.com/api/webhooks/1473028443972305043/h9xej66w_KYtRPOXmlbI_XbtBpFLYj2vpJzvwgPVgvKhdLBEht0j7VIHD2dRJVHjQ5e8`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: messageContent }),
