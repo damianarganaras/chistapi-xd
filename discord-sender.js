@@ -1,45 +1,124 @@
 const fs = require("fs");
 const path = require("path");
 
+// ============================================================
+// CONFIGURACIÓN
+// ============================================================
+
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY;
 
-const WEATHER_URL_POSADAS =
-  "https://wttr.in/Posadas,Misiones?format=%t+%C&m";
+const WEATHER_URL_POSADAS = "https://wttr.in/Posadas,Misiones?format=%t+%C&m";
 const WEATHER_URL_CABA = "https://wttr.in/BuenosAires?format=%t+%C&m";
-const GIPHY_TAGS = ["bendiciones", "flores", "buenos dias"];
+
+const COLOR_CELESTE = 3394815;   // #33ccff → decimal
+const COLOR_PURPURA = 10040319;  // #9933ff → decimal
 
 if (!DISCORD_WEBHOOK_URL) {
-  console.error("Error: DISCORD_WEBHOOK no configurado.");
+  console.error("❌ [Config] DISCORD_WEBHOOK no configurado.");
   process.exit(1);
 }
 
-async function getWeather(city) {
-  try {
-    const response = await fetch(city);
+// ============================================================
+// UTILIDADES
+// ============================================================
 
-    if (!response.ok) {
-      return "N/A";
-    }
-
-    return (await response.text()).trim();
-  } catch (error) {
-    return "Error al obtener clima";
-  }
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function getRandomGifUrl() {
+function getArgentinaHour() {
+  const now = new Date();
+  return (now.getUTCHours() - 3 + 24) % 24;
+}
+
+/** Turno mañana (11:00 ART) → true | Turno tarde (15:00 ART) → false */
+function isMorningTurn(hour) {
+  return hour < 14;
+}
+
+// ============================================================
+// CLIMA — Jitter + Retry
+// ============================================================
+
+async function getWeather(url, cityLabel) {
+  // Jitter aleatorio de 1–15 s para evitar bloqueos de wttr.in
+  const jitterMs = Math.floor(Math.random() * 14000) + 1000;
+  console.log(
+    `⏳ [Clima ${cityLabel}] Jitter de ${(jitterMs / 1000).toFixed(1)}s antes de consultar...`,
+  );
+  await sleep(jitterMs);
+
+  console.log(`🌐 [Clima ${cityLabel}] GET ${url}`);
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+
+      const text = (await response.text()).trim();
+      console.log(
+        `✅ [Clima ${cityLabel}] Intento ${attempt} OK: "${text}"`,
+      );
+      return text;
+    } catch (error) {
+      console.warn(
+        `⚠️ [Clima ${cityLabel}] Intento ${attempt} falló: ${error.message}`,
+      );
+      if (attempt === 1) {
+        console.log(
+          `🔄 [Clima ${cityLabel}] Reintentando en 5 segundos...`,
+        );
+        await sleep(5000);
+      }
+    }
+  }
+
+  console.error(
+    `❌ [Clima ${cityLabel}] Falló después de 2 intentos.`,
+  );
+  return "N/A";
+}
+
+// ============================================================
+// TEMPERATURA → TAG DE GIPHY
+// ============================================================
+
+function extractTemperature(weatherString) {
+  // Formato esperado: "+25°C Sunny" / "-3°C Snow"
+  const match = weatherString.match(/([+-]?\d+)\s*°/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function getGiphyTagByTemperature(temp) {
+  if (temp === null) return "buenos dias";
+  if (temp <= 0) return "congelado gracioso";
+  if (temp < 10) return "frio gracioso";
+  if (temp <= 20) return "fresco gracioso";
+  if (temp <= 30) return "clima perfecto";
+  if (temp <= 40) return "calor gracioso";
+  return "infierno gracioso";
+}
+
+// ============================================================
+// GIF DE GIPHY
+// ============================================================
+
+async function getRandomGifUrl(tag) {
   if (!GIPHY_API_KEY) {
-    console.warn("Aviso: GIPHY_API_KEY no configurado. Se enviará sin GIF.");
+    console.warn("⚠️ [Giphy] GIPHY_API_KEY no configurado. Se enviará sin GIF.");
     return null;
   }
 
-  const randomTag = GIPHY_TAGS[Math.floor(Math.random() * GIPHY_TAGS.length)];
+  console.log(`🎬 [Giphy] Buscando GIF con tag: "${tag}"`);
 
   try {
     const params = new URLSearchParams({
       api_key: GIPHY_API_KEY,
-      tag: randomTag,
+      tag,
       rating: "g",
     });
 
@@ -48,19 +127,34 @@ async function getRandomGifUrl() {
     );
 
     if (!response.ok) {
+      console.warn(`⚠️ [Giphy] HTTP ${response.status} ${response.statusText}`);
       return null;
     }
 
     const payload = await response.json();
     const gifUrl = payload?.data?.images?.original?.url;
-    return typeof gifUrl === "string" && gifUrl.length > 0 ? gifUrl : null;
+
+    if (typeof gifUrl === "string" && gifUrl.length > 0) {
+      console.log(`✅ [Giphy] GIF obtenido: ${gifUrl}`);
+      return gifUrl;
+    }
+
+    console.warn("⚠️ [Giphy] No se encontró URL de GIF en la respuesta.");
+    return null;
   } catch (error) {
+    console.error(`❌ [Giphy] Error: ${error.message}`);
     return null;
   }
 }
 
+// ============================================================
+// CHISTES
+// ============================================================
+
 function getRandomJoke() {
   const csvPath = path.join(__dirname, "jokes.csv");
+  console.log(`📖 [Chistes] Leyendo: ${csvPath}`);
+
   const data = fs.readFileSync(csvPath, "utf8");
 
   const lines = data
@@ -79,23 +173,128 @@ function getRandomJoke() {
     })
     .filter((joke) => joke.setup && joke.punchline);
 
+  console.log(`✅ [Chistes] ${jokes.length} chistes cargados desde CSV.`);
+
   if (jokes.length === 0) {
     throw new Error("No se encontraron chistes válidos en jokes.csv");
   }
 
-  return jokes[Math.floor(Math.random() * jokes.length)];
+  const selected = jokes[Math.floor(Math.random() * jokes.length)];
+  console.log(`🎲 [Chistes] Seleccionado: "${selected.setup}"`);
+  return selected;
 }
 
-async function run() {
-  const randomJoke = getRandomJoke();
+// ============================================================
+// SALUDOS PERSONALIZADOS
+// ============================================================
 
-  const [weatherPosadas, weatherCABA, gifUrl] = await Promise.all([
-    getWeather(WEATHER_URL_POSADAS),
-    getWeather(WEATHER_URL_CABA),
-    getRandomGifUrl(),
+const customGreetings = [
+  "Buendicioooones!!",
+  "Los te ka emeee.",
+  "BORJA LA CONCHA DE TU MADRE!",
+  "Bello día para que Alexis se pague la coca...",
+  "Poing devolveme la plata que me debés.",
+  "Nano, acá te va un chiste:",
+  "Asel, soltá el Tinder de trabas un rato y leé esto.",
+  "Puro, dejá de hacerte el misterioso.",
+  "German, activá que te estamos esperando.",
+  "Marce, ¿hoy se labura o se hace facha?",
+  "Dyno, reportándose desde la estratósfera.",
+  "Un saludo a todos, menos a Borja.",
+  "¿Alguien vio a Asel? Dicen que se fue con un camión con acoplado.",
+  "Alexis, sigo esperando la coca, rata inmunda.",
+  "Poing, cada día que pasa los intereses suben.",
+  "Nano, confirmame si este chiste rompe producción.",
+  "Atención, llegó la alegría (y no es el sueldo).",
+  "Asel, guardá la peluca y prestá atención.",
+  "Puro humo este grupo, igual los quiero.",
+  "Si Alexis paga la coca, mañana nieva.",
+  "Poing, acepto Mercado Pago, Transferencia o USDT.",
+  "Nano, ¿esto compila o explota?",
+  "Bendiciones para todos, menos para los que deben plata.",
+  "Asel, aflojale a los videos de 'sorpresas'.",
+  "Buendicioooones!!",
+  "Los te ka emeee.",
+  "BORJA LA CONCHA DE TU MADRE!",
+  "Bello día para que Alexis se pague la coca...",
+  "Poing devolveme la plata que me debés.",
+  "Nano, acá te va un chiste:",
+  "Asel, soltá el Tinder de trabas un rato y leé esto.",
+  "Puro, dejá de hacerte el misterioso.",
+  "German, activá que te estamos esperando.",
+  "Marce, ¿hoy se labura o se hace facha?",
+  "Dyno, reportándose desde la estratósfera.",
+  "Un saludo a todos, menos a Borja.",
+  "¿Alguien vio a Asel? Dicen que se fue con un camión con acoplado.",
+  "Alexis, sigo esperando la coca, rata inmunda.",
+  "Poing, cada día que pasa los intereses suben.",
+  "Nano, confirmame si este chiste rompe producción.",
+  "Atención, llegó la alegría (y no es el sueldo).",
+  "Asel, guardá la peluca y prestá atención.",
+  "Puro humo este grupo, igual los quiero.",
+  "German, ¿seguís vivo o te secuestraron?",
+  "Marce, largá la pala un rato.",
+  "Dyno, dejá de jugar y mirá esto.",
+  "Basta de amores, que vuelva el fútbol.",
+  "Si Alexis paga la coca, mañana nieva.",
+  "Poing, acepto Mercado Pago, Transferencia o USDT.",
+  "Asel, me dijeron que te vieron en la zona roja buscando ofertas.",
+  "Che, ¿quién le dio admin a Nano?",
+  "Puro, no te hagas el sordo que te estoy hablando.",
+  "German, aparecé que no cobramos entrada.",
+  "Marce, sos la luz de mis ojos (mentira, pagame).",
+  "Dyno, ¿ese lag es mental o de internet?",
+  "Hoy es un buen día para que Borja haga un gol (o se vaya).",
+  "Asel, con ese criterio mejor dedicate a la cría de caniches.",
+  "Alexis, la billetera no muerde, usala.",
+  "Poing, moroso incobrable.",
+  "Nano, ¿esto compila o explota?",
+  "Bendiciones para todos, menos para los que deben plata.",
+  "Asel, aflojale a los videos de 'sorpresas'.",
+  "Puro, ¿estás ahí o sos un bot?",
+  "German, te extrañamos (dijo nadie nunca).",
+];
+
+// ============================================================
+// EJECUCIÓN PRINCIPAL
+// ============================================================
+
+async function run() {
+  console.log("🚀 [Inicio] Ejecutando discord-sender.js...");
+  console.log(`🕐 [Hora] UTC: ${new Date().toISOString()}`);
+
+  const currentHour = getArgentinaHour();
+  const morning = isMorningTurn(currentHour);
+
+  console.log(
+    `🇦🇷 [Hora] Argentina (ART): ${currentHour}:00 — Turno: ${morning ? "MAÑANA (11:00)" : "TARDE (15:00)"}`,
+  );
+
+  // ── Chiste (solo turno mañana) ──────────────────────────
+  let randomJoke = null;
+  if (morning) {
+    randomJoke = getRandomJoke();
+  } else {
+    console.log("ℹ️ [Chistes] Turno tarde → no se incluye chiste.");
+  }
+
+  // ── Clima (jitter + retry en paralelo) ──────────────────
+  console.log("🌤️ [Clima] Iniciando consultas de clima...");
+  const [weatherPosadas, weatherCABA] = await Promise.all([
+    getWeather(WEATHER_URL_POSADAS, "Posadas"),
+    getWeather(WEATHER_URL_CABA, "Buenos Aires"),
   ]);
 
-  const currentHour = (new Date().getUTCHours() - 3 + 24) % 24;
+  // ── GIF basado en temperatura de Posadas ────────────────
+  const tempPosadas = extractTemperature(weatherPosadas);
+  console.log(
+    `🌡️ [Temperatura] Posadas: ${tempPosadas !== null ? tempPosadas + "°C" : "No detectada"}`,
+  );
+
+  const giphyTag = getGiphyTagByTemperature(tempPosadas);
+  const gifUrl = await getRandomGifUrl(giphyTag);
+
+  // ── Saludo y color ──────────────────────────────────────
   const timeGreeting =
     currentHour < 12
       ? "Buen día"
@@ -103,85 +302,24 @@ async function run() {
         ? "Buenas tardes"
         : "Buenas noches";
 
-  const COLOR_CELESTE = 3394815; // #33ccff
-  const COLOR_PURPURA = 10040319; // #9933ff
-  const embedColor = currentHour < 12 ? COLOR_CELESTE : COLOR_PURPURA;
-
-  const customGreetings = [
-    "Buendicioooones!!",
-    "Los te ka emeee.",
-    "BORJA LA CONCHA DE TU MADRE!",
-    "Bello día para que Alexis se pague la coca...",
-    "Poing devolveme la plata que me debés.",
-    "Nano, acá te va un chiste:",
-    "Asel, soltá el Tinder de trabas un rato y leé esto.",
-    "Puro, dejá de hacerte el misterioso.",
-    "German, activá que te estamos esperando.",
-    "Marce, ¿hoy se labura o se hace facha?",
-    "Dyno, reportándose desde la estratósfera.",
-    "Un saludo a todos, menos a Borja.",
-    "¿Alguien vio a Asel? Dicen que se fue con un camión con acoplado.",
-    "Alexis, sigo esperando la coca, rata inmunda.",
-    "Poing, cada día que pasa los intereses suben.",
-    "Nano, confirmame si este chiste rompe producción.",
-    "Atención, llegó la alegría (y no es el sueldo).",
-    "Asel, guardá la peluca y prestá atención.",
-    "Puro humo este grupo, igual los quiero.",
-    "Si Alexis paga la coca, mañana nieva.",
-    "Poing, acepto Mercado Pago, Transferencia o USDT.",
-    "Nano, ¿esto compila o explota?",
-    "Bendiciones para todos, menos para los que deben plata.",
-    "Asel, aflojale a los videos de 'sorpresas'.",
-    "Buendicioooones!!",
-    "Los te ka emeee.",
-    "BORJA LA CONCHA DE TU MADRE!",
-    "Bello día para que Alexis se pague la coca...",
-    "Poing devolveme la plata que me debés.",
-    "Nano, acá te va un chiste:",
-    "Asel, soltá el Tinder de trabas un rato y leé esto.",
-    "Puro, dejá de hacerte el misterioso.",
-    "German, activá que te estamos esperando.",
-    "Marce, ¿hoy se labura o se hace facha?",
-    "Dyno, reportándose desde la estratósfera.",
-    "Un saludo a todos, menos a Borja.",
-    "¿Alguien vio a Asel? Dicen que se fue con un camión con acoplado.",
-    "Alexis, sigo esperando la coca, rata inmunda.",
-    "Poing, cada día que pasa los intereses suben.",
-    "Nano, confirmame si este chiste rompe producción.",
-    "Atención, llegó la alegría (y no es el sueldo).",
-    "Asel, guardá la peluca y prestá atención.",
-    "Puro humo este grupo, igual los quiero.",
-    "German, ¿seguís vivo o te secuestraron?",
-    "Marce, largá la pala un rato.",
-    "Dyno, dejá de jugar y mirá esto.",
-    "Basta de amores, que vuelva el fútbol.",
-    "Si Alexis paga la coca, mañana nieva.",
-    "Poing, acepto Mercado Pago, Transferencia o USDT.",
-    "Asel, me dijeron que te vieron en la zona roja buscando ofertas.",
-    "Che, ¿quién le dio admin a Nano?",
-    "Puro, no te hagas el sordo que te estoy hablando.",
-    "German, aparecé que no cobramos entrada.",
-    "Marce, sos la luz de mis ojos (mentira, pagame).",
-    "Dyno, ¿ese lag es mental o de internet?",
-    "Hoy es un buen día para que Borja haga un gol (o se vaya).",
-    "Asel, con ese criterio mejor dedicate a la cría de caniches.",
-    "Alexis, la billetera no muerde, usala.",
-    "Poing, moroso incobrable.",
-    "Nano, ¿esto compila o explota?",
-    "Bendiciones para todos, menos para los que deben plata.",
-    "Asel, aflojale a los videos de 'sorpresas'.",
-    "Puro, ¿estás ahí o sos un bot?",
-    "German, te extrañamos (dijo nadie nunca).",
-  ];
+  const embedColor = morning ? COLOR_CELESTE : COLOR_PURPURA;
+  console.log(
+    `🎨 [Embed] Color: ${morning ? "Celeste (#33ccff)" : "Púrpura (#9933ff)"} → ${embedColor}`,
+  );
 
   const randomPhrase =
     customGreetings[Math.floor(Math.random() * customGreetings.length)];
+
+  // ── Construir embed ─────────────────────────────────────
+  const description = randomJoke
+    ? `### ${randomJoke.setup}\n${randomJoke.punchline}\n\n━━━━━━━━━━━━━━━━━━━━`
+    : "━━━━━━━━━━━━━━━━━━━━";
 
   const embedMessage = {
     embeds: [
       {
         title: `${timeGreeting}, ${randomPhrase}`,
-        description: `### ${randomJoke.setup}\n${randomJoke.punchline}\n\n━━━━━━━━━━━━━━━━━━━━`,
+        description,
         color: embedColor,
         ...(gifUrl ? { image: { url: gifUrl } } : {}),
         fields: [
@@ -200,6 +338,9 @@ async function run() {
     ],
   };
 
+  // ── Enviar a Discord ────────────────────────────────────
+  console.log("📤 [Discord] Enviando mensaje al webhook...");
+
   try {
     const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: "POST",
@@ -208,13 +349,19 @@ async function run() {
     });
 
     if (response.ok) {
-      console.log("Mensaje enviado con éxito.");
+      console.log(
+        `✅ [Discord] Mensaje enviado con éxito (HTTP ${response.status}).`,
+      );
     } else {
-      console.error("Error Discord:", response.status, response.statusText);
+      const body = await response.text();
+      console.error(
+        `❌ [Discord] Error: HTTP ${response.status} ${response.statusText}`,
+      );
+      console.error(`❌ [Discord] Body: ${body}`);
       process.exit(1);
     }
   } catch (error) {
-    console.error("Error de red:", error);
+    console.error(`❌ [Discord] Error de red: ${error.message}`);
     process.exit(1);
   }
 }

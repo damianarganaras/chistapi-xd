@@ -2,10 +2,11 @@ name: Daily Discord Joke
 
 on:
   schedule:
-    # Corre todos los días a las 14:00 UTC (11:00 AM Argentina aprox)
-    - cron: '0 14 * * *'
-  # Permite ejecutarlo manualmente desde la pestaña Actions para probar
-  workflow_dispatch:
+    # 11:13 AM ART (14:13 UTC)
+    - cron: '13 14 * * *'
+    # 03:22 PM ART (18:22 UTC)
+    - cron: '22 18 * * *'
+  workflow_dispatch: # Para que puedas probarlo a mano cuando quieras
 
 jobs:
   send-joke:
@@ -13,12 +14,12 @@ jobs:
 
     steps:
       - name: Checkout del código
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Ejecutar Script
         env:
