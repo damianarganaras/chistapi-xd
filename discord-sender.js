@@ -10,10 +10,11 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY;
 
 // Open-Meteo — gratuito, sin API key, devuelve JSON
+// Incluye apparent_temperature para sensación térmica
 const WEATHER_URL_POSADAS =
-  "https://api.open-meteo.com/v1/forecast?latitude=-27.3671&longitude=-55.8961&current_weather=true&timezone=America%2FArgentina%2FCordoba";
+  "https://api.open-meteo.com/v1/forecast?latitude=-27.3671&longitude=-55.8961&current=temperature_2m,apparent_temperature,weather_code,is_day&timezone=America%2FArgentina%2FCordoba";
 const WEATHER_URL_CABA =
-  "https://api.open-meteo.com/v1/forecast?latitude=-34.6037&longitude=-58.3816&current_weather=true&timezone=America%2FArgentina%2FBuenos_Aires";
+  "https://api.open-meteo.com/v1/forecast?latitude=-34.6037&longitude=-58.3816&current=temperature_2m,apparent_temperature,weather_code,is_day&timezone=America%2FArgentina%2FBuenos_Aires";
 
 const COLOR_CELESTE = 3394815;   // #33ccff → decimal
 const COLOR_PURPURA = 10040319;  // #9933ff → decimal
@@ -76,26 +77,29 @@ async function getWeather(url, cityLabel) {
 
       const json = await response.json();
       console.log(
-        `📡 [Clima ${cityLabel}] JSON crudo: ${JSON.stringify(json.current_weather)}`,
+        `📡 [Clima ${cityLabel}] JSON crudo: ${JSON.stringify(json.current)}`,
       );
 
-      const cw = json?.current_weather;
-      if (!cw || typeof cw.temperature !== "number") {
-        throw new Error("Respuesta JSON sin campo current_weather.temperature");
+      const cw = json?.current;
+      if (!cw || typeof cw.temperature_2m !== "number") {
+        throw new Error("Respuesta JSON sin campo current.temperature_2m");
       }
 
-      const temp    = Math.round(cw.temperature);
-      const isDay   = cw.is_day === 1 ? "day" : "night";
-      const codeKey = String(cw.weathercode ?? -1);
-      const wmoEntry = WMO_CODES[codeKey]?.[isDay];
+      const temp           = Math.round(cw.temperature_2m);
+      const apparentTemp   = typeof cw.apparent_temperature === "number"
+        ? Math.round(cw.apparent_temperature)
+        : null;
+      const isDay          = cw.is_day === 1 ? "day" : "night";
+      const codeKey        = String(cw.weather_code ?? -1);
+      const wmoEntry       = WMO_CODES[codeKey]?.[isDay];
 
       const description = wmoEntry?.description ?? "Clima desconocido";
       const image       = wmoEntry?.image ?? null;
 
       console.log(
-        `✅ [Clima ${cityLabel}] Intento ${attempt} OK — ${temp}°C | WMO ${codeKey} (${isDay}) → "${description}"`,
+        `✅ [Clima ${cityLabel}] Intento ${attempt} OK — Real: ${temp}°C | ST: ${apparentTemp !== null ? apparentTemp + "°C" : "N/D"} | WMO ${codeKey} (${isDay}) → "${description}"`,
       );
-      return { temp, description, image };
+      return { temp, apparentTemp, description, image };
     } catch (error) {
       clearTimeout(timeoutId);
       console.warn(
@@ -109,7 +113,7 @@ async function getWeather(url, cityLabel) {
   }
 
   console.error(`❌ [Clima ${cityLabel}] Falló después de 2 intentos.`);
-  return { temp: null, description: "Clima no disponible", image: null };
+  return { temp: null, apparentTemp: null, description: "Clima no disponible", image: null };
 }
 
 // ============================================================
@@ -308,13 +312,15 @@ async function run() {
     getWeather(WEATHER_URL_CABA, "Buenos Aires"),
   ]);
 
-  // ── GIF basado en temperatura de Posadas ────────────────
-  const tempPosadas = weatherPosadas.temp;
+  // ── GIF basado en sensación térmica de Posadas ──────────
+  const tempPosadas       = weatherPosadas.temp;
+  const apparentPosadas   = weatherPosadas.apparentTemp;
   console.log(
-    `🌡️ [Temperatura] Posadas: ${tempPosadas !== null ? tempPosadas + "°C" : "No disponible"} — ${weatherPosadas.description}`,
+    `🌡️ [Temperatura] Posadas — Real: ${tempPosadas !== null ? tempPosadas + "°C" : "N/D"} | ST: ${apparentPosadas !== null ? apparentPosadas + "°C" : "N/D"} — ${weatherPosadas.description}`,
   );
 
-  const giphyTag = getGiphyTagByTemperature(tempPosadas);
+  // La sensación térmica guía la elección del GIF
+  const giphyTag = getGiphyTagByTemperature(apparentPosadas ?? tempPosadas);
   console.log(`🏷️ [Giphy] Tag seleccionado por temperatura: "${giphyTag}"`);
 
   const gifUrl = await getRandomGifUrl(giphyTag);
@@ -351,14 +357,14 @@ async function run() {
           {
             name: "📍 Posadas",
             value: tempPosadas !== null
-              ? `\`${tempPosadas}°C\` ${weatherPosadas.description}`
+              ? `Real: \`${tempPosadas}°C\` | ST: \`${apparentPosadas !== null ? apparentPosadas + "°C" : "N/D"}\`\n${weatherPosadas.description}`
               : `\`${weatherPosadas.description}\``,
             inline: true,
           },
           {
             name: "📍 Buenos Aires",
             value: weatherCABA.temp !== null
-              ? `\`${weatherCABA.temp}°C\` ${weatherCABA.description}`
+              ? `Real: \`${weatherCABA.temp}°C\` | ST: \`${weatherCABA.apparentTemp !== null ? weatherCABA.apparentTemp + "°C" : "N/D"}\`\n${weatherCABA.description}`
               : `\`${weatherCABA.description}\``,
             inline: true,
           },
