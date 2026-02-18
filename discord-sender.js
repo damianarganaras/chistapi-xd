@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const WMO_CODES = require("./wmo-codes.json");
 
 // ============================================================
 // CONFIGURACIÓN
@@ -45,27 +46,8 @@ function isMorningTurn(hour) {
 // ============================================================
 
 /**
- * Traduce WMO Weather Interpretation Codes a texto legible.
- * https://open-meteo.com/en/docs#weathervariables
- */
-function wmoCodeToDescription(code) {
-  if (code === 0)                        return "Despejado ☀️";
-  if (code <= 3)                         return "Parcialmente nublado ⛅";
-  if (code <= 9)                         return "Niebla 🌫️";
-  if (code <= 19)                        return "Llovizna 🌦️";
-  if (code <= 29)                        return "Lluvia 🌧️";
-  if (code <= 39)                        return "Nieve 🌨️";
-  if (code <= 49)                        return "Niebla densa 🌫️";
-  if (code <= 59)                        return "Llovizna 🌦️";
-  if (code <= 69)                        return "Lluvia 🌧️";
-  if (code <= 79)                        return "Nevada 🌨️";
-  if (code <= 84)                        return "Lluvia y nieve 🌨️";
-  if (code <= 94)                        return "Tormenta ⛈️";
-  return "Tormenta severa 🌩️";
-}
-
-/**
- * Consulta Open-Meteo y devuelve { temp: number, description: string }.
+ * Consulta Open-Meteo y devuelve { temp: number, description: string, image: string }.
+ * Usa wmo-codes.json para textos en español con distinción día/noche.
  * Incluye jitter y un retry con 5s de espera.
  */
 async function getWeather(url, cityLabel) {
@@ -102,13 +84,18 @@ async function getWeather(url, cityLabel) {
         throw new Error("Respuesta JSON sin campo current_weather.temperature");
       }
 
-      const temp = Math.round(cw.temperature);
-      const description = wmoCodeToDescription(cw.weathercode ?? -1);
+      const temp    = Math.round(cw.temperature);
+      const isDay   = cw.is_day === 1 ? "day" : "night";
+      const codeKey = String(cw.weathercode ?? -1);
+      const wmoEntry = WMO_CODES[codeKey]?.[isDay];
+
+      const description = wmoEntry?.description ?? "Clima desconocido";
+      const image       = wmoEntry?.image ?? null;
 
       console.log(
-        `✅ [Clima ${cityLabel}] Intento ${attempt} OK — ${temp}°C, código WMO: ${cw.weathercode} → "${description}"`,
+        `✅ [Clima ${cityLabel}] Intento ${attempt} OK — ${temp}°C | WMO ${codeKey} (${isDay}) → "${description}"`,
       );
-      return { temp, description };
+      return { temp, description, image };
     } catch (error) {
       clearTimeout(timeoutId);
       console.warn(
@@ -122,7 +109,7 @@ async function getWeather(url, cityLabel) {
   }
 
   console.error(`❌ [Clima ${cityLabel}] Falló después de 2 intentos.`);
-  return { temp: null, description: "Clima no disponible" };
+  return { temp: null, description: "Clima no disponible", image: null };
 }
 
 // ============================================================
