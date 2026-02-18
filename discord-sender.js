@@ -8,8 +8,8 @@ const path = require("path");
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY;
 
-const WEATHER_URL_POSADAS = "https://wttr.in/Posadas,Misiones?format=%t+%C&m";
-const WEATHER_URL_CABA = "https://wttr.in/BuenosAires?format=%t+%C&m";
+const WEATHER_URL_POSADAS = "https://wttr.in/Posadas,Misiones?m&format=%t+%C";
+const WEATHER_URL_CABA = "https://wttr.in/BuenosAires?m&format=%t+%C";
 
 const COLOR_CELESTE = 3394815;   // #33ccff → decimal
 const COLOR_PURPURA = 10040319;  // #9933ff → decimal
@@ -52,19 +52,31 @@ async function getWeather(url, cityLabel) {
   console.log(`🌐 [Clima ${cityLabel}] GET ${url}`);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { "User-Agent": "Trabot/1.0" },
+      });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
 
-      const text = (await response.text()).trim();
-      console.log(
-        `✅ [Clima ${cityLabel}] Intento ${attempt} OK: "${text}"`,
-      );
-      return text;
+      const raw = (await response.text()).trim();
+      console.log(`📡 [Clima ${cityLabel}] Respuesta cruda: "${raw}"`);
+
+      if (!raw || raw.toLowerCase().includes("unknown") || raw.length < 2) {
+        throw new Error(`Respuesta vacía o inválida: "${raw}"`);
+      }
+
+      console.log(`✅ [Clima ${cityLabel}] Intento ${attempt} OK: "${raw}"`);
+      return raw;
     } catch (error) {
+      clearTimeout(timeoutId);
       console.warn(
         `⚠️ [Clima ${cityLabel}] Intento ${attempt} falló: ${error.message}`,
       );
@@ -77,10 +89,8 @@ async function getWeather(url, cityLabel) {
     }
   }
 
-  console.error(
-    `❌ [Clima ${cityLabel}] Falló después de 2 intentos.`,
-  );
-  return "N/A";
+  console.error(`❌ [Clima ${cityLabel}] Falló después de 2 intentos.`);
+  return "Clima no disponible";
 }
 
 // ============================================================
@@ -288,10 +298,12 @@ async function run() {
   // ── GIF basado en temperatura de Posadas ────────────────
   const tempPosadas = extractTemperature(weatherPosadas);
   console.log(
-    `🌡️ [Temperatura] Posadas: ${tempPosadas !== null ? tempPosadas + "°C" : "No detectada"}`,
+    `🌡️ [Temperatura] Extraída de Posadas: ${tempPosadas !== null ? tempPosadas + "°C" : "No detectada (respuesta: " + weatherPosadas + ")"}`,
   );
 
   const giphyTag = getGiphyTagByTemperature(tempPosadas);
+  console.log(`🏷️ [Giphy] Tag seleccionado por temperatura: "${giphyTag}"`);
+
   const gifUrl = await getRandomGifUrl(giphyTag);
 
   // ── Saludo y color ──────────────────────────────────────
@@ -347,6 +359,8 @@ async function run() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(embedMessage),
     });
+
+    console.log(`📊 [Discord] Webhook status: HTTP ${response.status} ${response.statusText}`);
 
     if (response.ok) {
       console.log(
