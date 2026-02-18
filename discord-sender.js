@@ -8,8 +8,11 @@ const path = require("path");
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK;
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY;
 
-const WEATHER_URL_POSADAS = "https://wttr.in/Posadas,Misiones?m&format=%t+%C";
-const WEATHER_URL_CABA = "https://wttr.in/BuenosAires?m&format=%t+%C";
+// Open-Meteo — gratuito, sin API key, devuelve JSON
+const WEATHER_URL_POSADAS =
+  "https://api.open-meteo.com/v1/forecast?latitude=-27.3671&longitude=-55.8961&current_weather=true&timezone=America%2FArgentina%2FCordoba";
+const WEATHER_URL_CABA =
+  "https://api.open-meteo.com/v1/forecast?latitude=-34.6037&longitude=-58.3816&current_weather=true&timezone=America%2FArgentina%2FBuenos_Aires";
 
 const COLOR_CELESTE = 3394815;   // #33ccff → decimal
 const COLOR_PURPURA = 10040319;  // #9933ff → decimal
@@ -38,11 +41,34 @@ function isMorningTurn(hour) {
 }
 
 // ============================================================
-// CLIMA — Jitter + Retry
+// CLIMA — Open-Meteo (JSON, sin API key) + Jitter + Retry
 // ============================================================
 
+/**
+ * Traduce WMO Weather Interpretation Codes a texto legible.
+ * https://open-meteo.com/en/docs#weathervariables
+ */
+function wmoCodeToDescription(code) {
+  if (code === 0)                        return "Despejado ☀️";
+  if (code <= 3)                         return "Parcialmente nublado ⛅";
+  if (code <= 9)                         return "Niebla 🌫️";
+  if (code <= 19)                        return "Llovizna 🌦️";
+  if (code <= 29)                        return "Lluvia 🌧️";
+  if (code <= 39)                        return "Nieve 🌨️";
+  if (code <= 49)                        return "Niebla densa 🌫️";
+  if (code <= 59)                        return "Llovizna 🌦️";
+  if (code <= 69)                        return "Lluvia 🌧️";
+  if (code <= 79)                        return "Nevada 🌨️";
+  if (code <= 84)                        return "Lluvia y nieve 🌨️";
+  if (code <= 94)                        return "Tormenta ⛈️";
+  return "Tormenta severa 🌩️";
+}
+
+/**
+ * Consulta Open-Meteo y devuelve { temp: number, description: string }.
+ * Incluye jitter y un retry con 5s de espera.
+ */
 async function getWeather(url, cityLabel) {
-  // Jitter aleatorio de 1–15 s para evitar bloqueos de wttr.in
   const jitterMs = Math.floor(Math.random() * 14000) + 1000;
   console.log(
     `⏳ [Clima ${cityLabel}] Jitter de ${(jitterMs / 1000).toFixed(1)}s antes de consultar...`,
@@ -66,42 +92,42 @@ async function getWeather(url, cityLabel) {
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
 
-      const raw = (await response.text()).trim();
-      console.log(`📡 [Clima ${cityLabel}] Respuesta cruda: "${raw}"`);
+      const json = await response.json();
+      console.log(
+        `📡 [Clima ${cityLabel}] JSON crudo: ${JSON.stringify(json.current_weather)}`,
+      );
 
-      if (!raw || raw.toLowerCase().includes("unknown") || raw.length < 2) {
-        throw new Error(`Respuesta vacía o inválida: "${raw}"`);
+      const cw = json?.current_weather;
+      if (!cw || typeof cw.temperature !== "number") {
+        throw new Error("Respuesta JSON sin campo current_weather.temperature");
       }
 
-      console.log(`✅ [Clima ${cityLabel}] Intento ${attempt} OK: "${raw}"`);
-      return raw;
+      const temp = Math.round(cw.temperature);
+      const description = wmoCodeToDescription(cw.weathercode ?? -1);
+
+      console.log(
+        `✅ [Clima ${cityLabel}] Intento ${attempt} OK — ${temp}°C, código WMO: ${cw.weathercode} → "${description}"`,
+      );
+      return { temp, description };
     } catch (error) {
       clearTimeout(timeoutId);
       console.warn(
         `⚠️ [Clima ${cityLabel}] Intento ${attempt} falló: ${error.message}`,
       );
       if (attempt === 1) {
-        console.log(
-          `🔄 [Clima ${cityLabel}] Reintentando en 5 segundos...`,
-        );
+        console.log(`🔄 [Clima ${cityLabel}] Reintentando en 5 segundos...`);
         await sleep(5000);
       }
     }
   }
 
   console.error(`❌ [Clima ${cityLabel}] Falló después de 2 intentos.`);
-  return "Clima no disponible";
+  return { temp: null, description: "Clima no disponible" };
 }
 
 // ============================================================
 // TEMPERATURA → TAG DE GIPHY
 // ============================================================
-
-function extractTemperature(weatherString) {
-  // Formato esperado: "+25°C Sunny" / "-3°C Snow"
-  const match = weatherString.match(/([+-]?\d+)\s*°/);
-  return match ? parseInt(match[1], 10) : null;
-}
 
 function getGiphyTagByTemperature(temp) {
   if (temp === null) return "buenos dias";
@@ -296,9 +322,9 @@ async function run() {
   ]);
 
   // ── GIF basado en temperatura de Posadas ────────────────
-  const tempPosadas = extractTemperature(weatherPosadas);
+  const tempPosadas = weatherPosadas.temp;
   console.log(
-    `🌡️ [Temperatura] Extraída de Posadas: ${tempPosadas !== null ? tempPosadas + "°C" : "No detectada (respuesta: " + weatherPosadas + ")"}`,
+    `🌡️ [Temperatura] Posadas: ${tempPosadas !== null ? tempPosadas + "°C" : "No disponible"} — ${weatherPosadas.description}`,
   );
 
   const giphyTag = getGiphyTagByTemperature(tempPosadas);
@@ -337,12 +363,16 @@ async function run() {
         fields: [
           {
             name: "📍 Posadas",
-            value: `\`${weatherPosadas}\``,
+            value: tempPosadas !== null
+              ? `\`${tempPosadas}°C\` ${weatherPosadas.description}`
+              : `\`${weatherPosadas.description}\``,
             inline: true,
           },
           {
             name: "📍 Buenos Aires",
-            value: `\`${weatherCABA}\``,
+            value: weatherCABA.temp !== null
+              ? `\`${weatherCABA.temp}°C\` ${weatherCABA.description}`
+              : `\`${weatherCABA.description}\``,
             inline: true,
           },
         ],
