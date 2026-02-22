@@ -297,13 +297,8 @@ async function run() {
     `🇦🇷 [Hora] Argentina (ART): ${currentHour}:00 — Turno: ${morning ? "MAÑANA (11:00)" : "TARDE (15:00)"}`,
   );
 
-  // ── Chiste (solo turno mañana) ──────────────────────────
-  let randomJoke = null;
-  if (morning) {
-    randomJoke = getRandomJoke();
-  } else {
-    console.log("ℹ️ [Chistes] Turno tarde → no se incluye chiste.");
-  }
+  // ── Chiste (ambos turnos) ────────────────────────────────
+  const randomJoke = getRandomJoke();
 
   // ── Clima (jitter + retry en paralelo) ──────────────────
   console.log("🌤️ [Clima] Iniciando consultas de clima...");
@@ -319,11 +314,15 @@ async function run() {
     `🌡️ [Temperatura] Posadas — Real: ${tempPosadas !== null ? tempPosadas + "°C" : "N/D"} | ST: ${apparentPosadas !== null ? apparentPosadas + "°C" : "N/D"} — ${weatherPosadas.description}`,
   );
 
-  // La sensación térmica guía la elección del GIF
-  const giphyTag = getGiphyTagByTemperature(apparentPosadas ?? tempPosadas);
-  console.log(`🏷️ [Giphy] Tag seleccionado por temperatura: "${giphyTag}"`);
-
-  const gifUrl = await getRandomGifUrl(giphyTag);
+  // La sensación térmica guía la elección del GIF (solo turno mañana)
+  let gifUrl = null;
+  if (morning) {
+    const giphyTag = getGiphyTagByTemperature(apparentPosadas ?? tempPosadas);
+    console.log(`🏷️ [Giphy] Tag seleccionado por temperatura: "${giphyTag}"`);
+    gifUrl = await getRandomGifUrl(giphyTag);
+  } else {
+    console.log("ℹ️ [Giphy] Turno tarde → no se incluye GIF.");
+  }
 
   // ── Saludo y color ──────────────────────────────────────
   const timeGreeting =
@@ -342,14 +341,12 @@ async function run() {
     customGreetings[Math.floor(Math.random() * customGreetings.length)];
 
   // ── Construir embed ─────────────────────────────────────
-  const description = randomJoke
-    ? `### ${randomJoke.setup}\n${randomJoke.punchline}\n\n━━━━━━━━━━━━━━━━━━━━`
-    : "━━━━━━━━━━━━━━━━━━━━";
+  const description = `### ${randomJoke.setup}\n${randomJoke.punchline}\n\n━━━━━━━━━━━━━━━━━━━━`;
 
   const embedMessage = {
     embeds: [
       {
-        title: `${timeGreeting}, ${randomPhrase}`,
+        ...(morning ? { title: `${timeGreeting}, ${randomPhrase}` } : {}),
         description,
         color: embedColor,
         ...(gifUrl ? { image: { url: gifUrl } } : {}),
